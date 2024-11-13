@@ -23,7 +23,8 @@ this benchmark used 27 Ethereum blocks inside the eth_blocks as test dataset.
 
 # Analysis
 used this jupyter notebook:
-[bubble_polit.ipynb](https://github.com/PikaZ76/block-data/blob/main/compress-project/bubble_plot.ipynb)
+[bubble_polit.ipynb](https://pikaz76.github.io/block-data/bubble_plot.ipynb)
 
 it's will generate a bubble chart.
+[Analysis Chart](https://pikaz76.github.io/block-data/benchmark_interactive.html)
 
