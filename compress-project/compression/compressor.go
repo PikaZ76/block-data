@@ -32,10 +32,11 @@ const (
 	Snappy CompressionType = "snappy"
 	Brotli CompressionType = "brotli"
 	Bzip2  CompressionType = "bzip2"
+	ZstdD CompressionType = "zstdD"
 )
 
 // CompressorFactory 工厂函数，根据算法名称和压缩级别返回对应的 Compressor
-func CompressorFactory(compressionType CompressionType, level int) (Compressor, error) {
+func CompressorFactory(compressionType CompressionType, level int, dictionaries map[CompressionType][]byte) (Compressor, error) {
 	switch compressionType {
 	case Gzip:
 		return NewGzipCompressor(level)
@@ -43,6 +44,12 @@ func CompressorFactory(compressionType CompressionType, level int) (Compressor, 
 		return NewXzCompressor()
 	case Zstd:
 		return NewZstdCompressor(level)
+	case ZstdD:
+		dict, hasDict := dictionaries[Zstd]
+        if !hasDict {
+            dict = nil
+        }
+        return NewZstdDCompressor(level, dict)
 	case Lz4:
 		return NewLz4Compressor(level)
 	case Snappy:
@@ -194,6 +201,72 @@ func (c *ZstdCompressor) Decompress(data []byte) ([]byte, error) {
 	}
 	defer decoder.Close()
 	return decoder.DecodeAll(data, nil)
+}
+
+type ZstdDCompressor struct {
+	// level int // 1-5
+	encoder *zstd.Encoder
+    decoder *zstd.Decoder
+}
+
+func NewZstdDCompressor(level int, dict []byte) (*ZstdDCompressor, error) {
+	if level < 1 || level > 4 {
+		return nil, errors.New("invalid zstd compression level")
+	}
+	var dopts []zstd.DOption
+	var eopts []zstd.EOption
+    // 设置压缩级别
+	l:=zstd.WithEncoderLevel(mappingZstdLevel(level))
+    eopts = append(eopts, l)
+
+    // 如果提供了字典，设置字典选项
+    if len(dict) > 0 {
+        eopts = append(eopts, zstd.WithEncoderDict(dict))
+        dopts = append(dopts, zstd.WithDecoderDicts(dict))
+    }
+
+    // 创建编码器
+    encoder, err := zstd.NewWriter(nil, eopts...)
+    if err != nil {
+        return nil, err
+    }
+
+    // 创建解码器
+    decoder, err := zstd.NewReader(nil, dopts...)
+    if err != nil {
+        encoder.Close()
+        return nil, err
+    }
+
+    return &ZstdDCompressor{
+        encoder: encoder,
+        decoder: decoder,
+    }, nil
+}
+
+func mappingZstdLevel(level int) zstd.EncoderLevel {
+	var zstdLevel zstd.EncoderLevel
+	switch level {
+	case 1:
+		zstdLevel = zstd.SpeedFastest
+	case 2:
+		zstdLevel = zstd.SpeedDefault
+	case 3:
+		zstdLevel = zstd.SpeedBetterCompression
+	case 4:
+		zstdLevel = zstd.SpeedBestCompression
+	}
+	return zstdLevel
+
+}
+func (c *ZstdDCompressor) Compress(data []byte) ([]byte, error) {
+	defer c.encoder.Close()
+	return c.encoder.EncodeAll(data, nil), nil
+}
+
+func (c *ZstdDCompressor) Decompress(data []byte) ([]byte, error) {
+	defer c.decoder.Close()
+	return c.decoder.DecodeAll(data, nil)
 }
 
 // BrotliCompressor 实现了 Brotli 压缩算法

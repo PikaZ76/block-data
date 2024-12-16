@@ -11,13 +11,14 @@ import (
 )
 
 var algorithmsWithLevels = map[string][]int{
-	"gzip":   {1, 2, 3, 4},
-	"xz":     {0},
+	"gzip":   {1, 2},
+	// "xz":     {0},
 	"snappy": {0},
 	"zstd":   {1, 2, 3, 4},
-	"brotli": {1, 2, 3, 4, 5, 6, 7, 8}, // 12, too slow this level ......
-	"bzip2":  {1, 6, 9},
-	"lz4":    {0, 1, 2, 3, 4, 5, 9},
+	"zstdD":   {1, 2, 3, 4},
+	// "brotli": {1, 2, 3, 4, 5, 6, 7, 8}, // 12, too slow this level ......
+	// "bzip2":  {1, 6, 9},
+	// "lz4":    {0, 1, 2, 3, 4, 5, 9},
 }
 
 func getJSONFiles(inputDir string) ([]string, error) {
@@ -52,7 +53,7 @@ func getExtension(algorithm string) string {
 		return ".gz"
 	case "xz":
 		return ".xz"
-	case "zstd":
+	case "zstd", "zstdD":
 		return ".zst"
 	case "lz4":
 		return ".lz4"
@@ -67,9 +68,10 @@ func getExtension(algorithm string) string {
 	}
 }
 
-func parseFlags() (inputDir string, epochs int) {
+func parseFlags() (inputDir string, epochs int, zstdDictPath string) {
 	flag.StringVar(&inputDir, "input", "", "Directory containing JSON files to compress")
 	flag.IntVar(&epochs, "epoch", 1, "Number of times to repeat compression and decompression")
+	flag.StringVar(&zstdDictPath, "zstd_dict", "", "Path to zstd dictionary file (optional)")
 	flag.Parse()
 	return
 }
@@ -85,8 +87,8 @@ type AlgorithmBenchmark struct {
 	compressor        compression.Compressor
 }
 
-func NewAlgorithmBenchmark(algorithm string, level int, dataMap map[string][]byte, totalOriginalSize int64, epochs int, tempDir string, statsFile *os.File) (*AlgorithmBenchmark, error) {
-	compressor, err := compression.CompressorFactory(compression.CompressionType(algorithm), level)
+func NewAlgorithmBenchmark(algorithm string, level int, dictMap map[compression.CompressionType][]byte, dataMap map[string][]byte, totalOriginalSize int64, epochs int, tempDir string, statsFile *os.File) (*AlgorithmBenchmark, error) {
+	compressor, err := compression.CompressorFactory(compression.CompressionType(algorithm), level, dictMap)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +274,7 @@ func preloadData(jsonFiles []string) (map[string][]byte, int64, error) {
 }
 
 func main() {
-	inputDir, epochs := parseFlags()
+	inputDir, epochs, zstdDictPath := parseFlags()
 
 	jsonFiles, err := getJSONFiles(inputDir)
 	if err != nil {
@@ -291,7 +293,22 @@ func main() {
 		fmt.Printf("Error preloading data: %v\n", err)
 		return
 	}
+	// 加载 zstd 字典（如果提供）
+    var zstdDict []byte
+    if zstdDictPath != "" {
+        zstdDict, err = os.ReadFile(zstdDictPath)
+        if err != nil {
+            fmt.Printf("Error reading zstd dictionary file: %v\n", err)
+            return
+        }
+        fmt.Printf("Loaded zstd dictionary from %s, size: %d bytes\n", zstdDictPath, len(zstdDict))
+    }
 
+    // 创建字典映射
+    dictionaries := make(map[compression.CompressionType][]byte)
+    if zstdDict != nil {
+        dictionaries[compression.Zstd] = zstdDict
+    }
 	statsFile, err := os.Create(filepath.Join(tempDir, "benchmark_stats.csv"))
 	if err != nil {
 		fmt.Printf("Error creating stats file: %v\n", err)
@@ -303,7 +320,7 @@ func main() {
 
 	for algorithm, levels := range algorithmsWithLevels {
 		for _, level := range levels {
-			ab, err := NewAlgorithmBenchmark(algorithm, level, dataMap, totalOriginalSize, epochs, tempDir, statsFile)
+			ab, err := NewAlgorithmBenchmark(algorithm, level, dictionaries, dataMap, totalOriginalSize, epochs, tempDir, statsFile)
 			if err != nil {
 				fmt.Printf("Error creating benchmark for %s level %d: %v\n", algorithm, level, err)
 				continue
